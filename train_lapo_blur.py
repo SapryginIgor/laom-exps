@@ -87,41 +87,57 @@ class DepthBlurAugmenter:
         
         Args:
             img_tensor: Tensor of shape (B, H, W, C) in range [0, 255] uint8
+                        For frame_stack=3, C=9 (3 frames * 3 channels each)
         
         Returns:
             Blurred tensor of same shape in range [0, 255] uint8
         """
         batch_size = img_tensor.shape[0]
+        height, width = img_tensor.shape[1], img_tensor.shape[2]
+        channels = img_tensor.shape[3]
+        
+        # Assuming 3 channels per frame (RGB/BGR)
+        frames = channels // 3
         blurred_batch = []
         
         for i in range(batch_size):
             # img_tensor is already in uint8 [0, 255] format (H, W, C)
             img = img_tensor[i].cpu().numpy().astype(np.uint8)
             
-            # Infer depth
-            with torch.no_grad():
-                depth = self.model.infer_image(img)  # HxW depth map
+            # Split stacked frames
+            blurred_frames = []
+            for f in range(frames):
+                # Extract individual frame (H, W, 3)
+                frame = img[:, :, f*3:(f+1)*3]
+                
+                # Infer depth for this frame
+                with torch.no_grad():
+                    depth = self.model.infer_image(frame)  # HxW depth map
+                
+                # Normalize depth to [0, 255]
+                depth = (depth - depth.min()) / (depth.max() - depth.min()) * 255.0
+                depth = depth.astype(np.uint8)
+                
+                # Create mask: foreground (high depth values) vs background (low depth values)
+                p = np.percentile(depth, self.percentile)
+                mask = (depth > p).astype(np.float32)
+                
+                # Feather mask edges
+                mask = cv2.GaussianBlur(mask, self.mask_kernel, self.mask_sigma)
+                mask3 = mask[..., None]  # Add channel dimension
+                
+                # Apply Gaussian blur to background
+                blurred = cv2.GaussianBlur(frame, self.blur_kernel, self.blur_sigma)
+                
+                # Composite: keep foreground sharp, blur background
+                result = (frame * mask3 + blurred * (1 - mask3)).astype(np.uint8)
+                blurred_frames.append(result)
             
-            # Normalize depth to [0, 255]
-            depth = (depth - depth.min()) / (depth.max() - depth.min()) * 255.0
-            depth = depth.astype(np.uint8)
-            
-            # Create mask: foreground (high depth values) vs background (low depth values)
-            p = np.percentile(depth, self.percentile)
-            mask = (depth > p).astype(np.float32)
-            
-            # Feather mask edges
-            mask = cv2.GaussianBlur(mask, self.mask_kernel, self.mask_sigma)
-            mask3 = mask[..., None]  # Add channel dimension
-            
-            # Apply Gaussian blur to background
-            blurred = cv2.GaussianBlur(img, self.blur_kernel, self.blur_sigma)
-            
-            # Composite: keep foreground sharp, blur background
-            result = (img * mask3 + blurred * (1 - mask3)).astype(np.uint8)
+            # Recombine blurred frames
+            combined_result = np.concatenate(blurred_frames, axis=2)
             
             # Keep as uint8 [0, 255] (H, W, C)
-            blurred_batch.append(torch.from_numpy(result))
+            blurred_batch.append(torch.from_numpy(combined_result))
         
         return torch.stack(blurred_batch).to(img_tensor.device).to(torch.uint8)
 
