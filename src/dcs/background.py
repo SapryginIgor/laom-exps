@@ -250,10 +250,10 @@ class DistractingBackgroundEnv(control.Environment):
         # sky_size = sky_height * sky_width * sky_nchannel
         sky_address = self._env.physics.model.tex_adr[SKY_TEXTURE_INDEX]
 
-        sky_texture = self._env.physics.model.tex_rgb[sky_address : sky_address + sky_size].astype(np.float32)
-        # sky_texture = self._env.physics.model.tex_data[
-        #     sky_address : sky_address + sky_size
-        # ].astype(np.float32)
+        # sky_texture = self._env.physics.model.tex_rgb[sky_address : sky_address + sky_size].astype(np.float32)
+        sky_texture = self._env.physics.model.tex_data[
+            sky_address : sky_address + sky_size
+        ].astype(np.float32)
 
         if self._video_paths:
             if self._shuffle_buffer_size:
@@ -273,11 +273,13 @@ class DistractingBackgroundEnv(control.Environment):
                 video_path = self._random_state.choice(self._video_paths)
                 # file_names = tf.io.gfile.listdir(video_path)
                 file_names = listdir(video_path)
-
+                # print("VIDEO PATH:", video_path)
+                # print("FILE NAMES:", file_names)
                 if not self._dynamic:
                     # Randomly pick a single static frame.
                     file_names = [self._random_state.choice(file_names)]
                 images = [imread(os.path.join(video_path, fn)) for fn in file_names]
+            # print("IMAGES LEN:", len(images))
 
             # Pick a random starting point and steping direction.
             self._current_img_index = self._random_state.choice(len(images))
@@ -330,8 +332,8 @@ class DistractingBackgroundEnv(control.Environment):
             end = self._background.address + self._background.size
             texture = self._background.textures[self._current_img_index]
 
-            # self._env.physics.model.tex_data[start:end] = texture
-            self._env.physics.model.tex_rgb[start:end] = texture
+            self._env.physics.model.tex_data[start:end] = texture
+            # self._env.physics.model.tex_rgb[start:end] = texture
 
             # Upload the new texture to the GPU. Note: we need to make sure that the
             # OpenGL context belonging to this Physics instance is the current one.

@@ -2,7 +2,7 @@ group: "laom-default"
 seed: 0
 
 lapo:
-  num_epochs: 10
+  num_epochs: 1
   batch_size: 512
   use_aug: True
   future_obs_offset: 10
@@ -26,7 +26,7 @@ lapo:
   data_path: "data/example-data.hdf5"
 
 bc:
-  num_epochs: 10
+  num_epochs: 1
   batch_size: 512
   learning_rate: 0.0001
   weight_decay: 0.0 
@@ -41,11 +41,11 @@ bc:
   data_path: "data/example-data.hdf5"
   dcs_backgrounds_path: "DAVIS/JPEGImages/480p"
   dcs_backgrounds_split: "train"
-  eval_episodes: 5
+  eval_episodes: 1
   eval_seed: 0
 
 decoder:
-  total_updates: 2500
+  total_updates: 10
   batch_size: 512
   learning_rate: 0.0003
   weight_decay: 0.0
@@ -56,5 +56,5 @@ decoder:
   data_path: "data/example-data.hdf5"
   dcs_backgrounds_path: "DAVIS/JPEGImages/480p"
   dcs_backgrounds_split: "train"
-  eval_episodes: 25
+  eval_episodes: 1
   eval_seed: 0
