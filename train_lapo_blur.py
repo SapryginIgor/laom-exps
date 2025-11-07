@@ -86,19 +86,17 @@ class DepthBlurAugmenter:
         Apply depth-based blur to a batch of images.
         
         Args:
-            img_tensor: Tensor of shape (B, C, H, W) in range [-1, 1]
+            img_tensor: Tensor of shape (B, H, W, C) in range [0, 255] uint8
         
         Returns:
-            Blurred tensor of same shape
+            Blurred tensor of same shape in range [0, 255] uint8
         """
         batch_size = img_tensor.shape[0]
         blurred_batch = []
         
         for i in range(batch_size):
-            # Convert from tensor [-1, 1] to numpy uint8 [0, 255]
-            img = img_tensor[i].cpu().numpy()
-            img = ((img + 1) * 127.5).clip(0, 255).astype(np.uint8)
-            img = img.transpose(1, 2, 0)  # CHW -> HWC
+            # img_tensor is already in uint8 [0, 255] format (H, W, C)
+            img = img_tensor[i].cpu().numpy().astype(np.uint8)
             
             # Infer depth
             with torch.no_grad():
@@ -122,12 +120,10 @@ class DepthBlurAugmenter:
             # Composite: keep foreground sharp, blur background
             result = (img * mask3 + blurred * (1 - mask3)).astype(np.uint8)
             
-            # Convert back to tensor [-1, 1]
-            result = result.transpose(2, 0, 1)  # HWC -> CHW
-            result = (result / 127.5 - 1.0).astype(np.float32)
+            # Keep as uint8 [0, 255] (H, W, C)
             blurred_batch.append(torch.from_numpy(result))
         
-        return torch.stack(blurred_batch).to(img_tensor.device)
+        return torch.stack(blurred_batch).to(img_tensor.device).to(torch.uint8)
 
 
 @dataclass
@@ -147,7 +143,6 @@ class LAPOConfig:
     data_path: str = "data/test.hdf5"
     # Blurring parameters
     use_blur: bool = True
-    blur_prob: float = 0.5  # Probability of applying blur
     depth_encoder: str = 'vitb'  # 'vits', 'vitb', 'vitl', 'vitg'
     blur_percentile: int = 50  # Depth percentile for foreground/background
 
@@ -252,14 +247,17 @@ def train_lapo(config: LAPOConfig):
             total_steps += 1
 
             obs, next_obs, future_obs, actions, _, _ = [b.to(DEVICE) for b in batch]
+            
+            # Apply depth-based blur augmentation BEFORE normalization
+            if blur_augmenter is not None:
+                # obs and future_obs are in [0, 255] uint8 format (B, H, W, C)
+                obs = blur_augmenter.apply_blur(obs)
+                future_obs = blur_augmenter.apply_blur(future_obs)
+            
+            # Now normalize to [-1, 1]
             obs = normalize_img(obs.permute((0, 3, 1, 2)))
             next_obs = normalize_img(next_obs.permute((0, 3, 1, 2)))
             future_obs = normalize_img(future_obs.permute((0, 3, 1, 2)))
-
-            # Apply depth-based blur augmentation with probability
-            if blur_augmenter is not None and np.random.rand() < config.blur_prob:
-                obs = blur_augmenter.apply_blur(obs)
-                future_obs = blur_augmenter.apply_blur(future_obs)
 
             # update lapo
             with torch.autocast(DEVICE, dtype=torch.bfloat16):
