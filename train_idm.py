@@ -10,7 +10,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchinfo
-import wandb
+from torch.utils.tensorboard import SummaryWriter
 from pyrallis import field
 from torch.utils.data import DataLoader
 from tqdm import trange
@@ -204,22 +204,17 @@ def train_idm(config: IDMConfig):
             state_probe_loss.backward()
             state_probe_optim.step()
 
-            wandb.log(
-                {
-                    "idm/mse_loss": loss.item(),
-                    "idm/state_probe_loss": state_probe_loss.item(),
-                    "idm/throughput": total_tokens / (time.time() - start_time),
-                    "idm/learning_rate": scheduler.get_last_lr()[0],
-                    "idm/grad_norm": get_grad_norm(idm).item(),
-                    "idm/obs_hidden_norm": torch.norm(obs_emb, p=2, dim=-1).mean().item(),
-                    "idm/epoch": epoch,
-                    "idm/total_steps": total_steps,
-                }
-            )
+            writer.add_scalar("idm/mse_loss", loss.item(), total_steps)
+            writer.add_scalar("idm/state_probe_loss", state_probe_loss.item(), total_steps)
+            writer.add_scalar("idm/throughput", total_tokens / (time.time() - start_time), total_steps)
+            writer.add_scalar("idm/learning_rate", scheduler.get_last_lr()[0], total_steps)
+            writer.add_scalar("idm/grad_norm", get_grad_norm(idm).item(), total_steps)
+            writer.add_scalar("idm/obs_hidden_norm", torch.norm(obs_emb, p=2, dim=-1).mean().item(), total_steps)
+            writer.add_scalar("idm/epoch", epoch, total_steps)
 
         if config.eval_data_path is not None:
             eval_mse_loss = evaluate(idm, eval_dataloader, device=DEVICE)
-            wandb.log({"idm/eval_mse_loss": eval_mse_loss, "idm/epoch": epoch, "idm/total_steps": total_steps})
+            writer.add_scalar("idm/eval_mse_loss", eval_mse_loss, total_steps)
 
     return idm
 
@@ -318,15 +313,10 @@ def train_bc(lam: IDMLabels, config: BCConfig):
             optim.step()
             scheduler.step()
 
-            wandb.log(
-                {
-                    "bc/mse_loss": loss.item(),
-                    "bc/throughput": total_tokens / (time.time() - start_time),
-                    "bc/learning_rate": scheduler.get_last_lr()[0],
-                    "bc/epoch": epoch,
-                    "bc/total_steps": total_steps,
-                }
-            )
+            writer.add_scalar("bc/mse_loss", loss.item(), total_steps)
+            writer.add_scalar("bc/throughput", total_tokens / (time.time() - start_time), total_steps)
+            writer.add_scalar("bc/learning_rate", scheduler.get_last_lr()[0], total_steps)
+            writer.add_scalar("bc/epoch", epoch, total_steps)
 
     actor.eval()
     eval_returns = evaluate_bc(
@@ -337,26 +327,26 @@ def train_bc(lam: IDMLabels, config: BCConfig):
         device=DEVICE,
         action_decoder=None,
     )
-    wandb.log(
-        {
-            "bc/eval_returns_mean": eval_returns.mean(),
-            "bc/eval_returns_std": eval_returns.std(),
-            "bc/epoch": epoch,
-            "bc/total_steps": total_steps,
-        }
-    )
+    writer.add_scalar("bc/eval_returns_mean", eval_returns.mean(), total_steps)
+    writer.add_scalar("bc/eval_returns_std", eval_returns.std(), total_steps)
     return actor
 
 
 @pyrallis.wrap()
 def train(config: Config):
-    run = wandb.init(
-        project=config.project,
-        group=config.group,
-        name=config.name,
-        config=asdict(config),
-        save_code=True,
-    )
+    log_dir = f"runs/{config.group}/{config.name}"
+    global writer
+    writer = SummaryWriter(log_dir=log_dir)
+    
+    # Log config
+    config_dict = asdict(config)
+    for key, value in config_dict.items():
+        if isinstance(value, dict):
+            for sub_key, sub_value in value.items():
+                writer.add_text(f"config/{key}/{sub_key}", str(sub_value), 0)
+        else:
+            writer.add_text(f"config/{key}", str(value), 0)
+    
     print(config.bc.eval_episodes)
 
     set_seed(config.seed)
@@ -365,7 +355,7 @@ def train(config: Config):
     # stage 2: pretraining bc on idm labeled actions
     actor = train_bc(lam=idm, config=config.bc)
 
-    run.finish()
+    writer.close()
     return idm, actor
 
 

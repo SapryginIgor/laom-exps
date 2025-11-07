@@ -13,7 +13,7 @@ import pyrallis
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import wandb
+from torch.utils.tensorboard import SummaryWriter
 from dm_control import suite
 from gymnasium.wrappers.utils import update_mean_var_count_from_moments
 from shimmy import DmControlCompatibilityV0
@@ -166,13 +166,13 @@ class Agent(nn.Module):
 
 @pyrallis.wrap()
 def train(args: Args):
-    wandb.init(
-        project=args.project,
-        group=args.group,
-        name=args.name,
-        config=asdict(args),
-        save_code=True,
-    )
+    log_dir = f"runs/{args.group}/{args.name}"
+    writer = SummaryWriter(log_dir=log_dir)
+    
+    # Log config
+    config_dict = asdict(args)
+    for key, value in config_dict.items():
+        writer.add_text(f"config/{key}", str(value), 0)
 
     # TRY NOT TO MODIFY: seeding
     random.seed(args.seed)
@@ -232,10 +232,8 @@ def train(args: Args):
                 episodic_return = infos["episode"]["r"].mean()
                 episodic_length = infos["episode"]["l"].mean()
                 print(f"global_step={global_step}, episodic_return={episodic_return}")
-                wandb.log(
-                    {"charts/episodic_return": episodic_return, "charts/episodic_length": episodic_length},
-                    step=global_step,
-                )
+                writer.add_scalar("charts/episodic_return", episodic_return, global_step)
+                writer.add_scalar("charts/episodic_length", episodic_length, global_step)
 
         # bootstrap value if not done
         with torch.no_grad():
@@ -309,20 +307,15 @@ def train(args: Args):
         explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
 
         print("SPS:", int(global_step / (time.time() - start_time)))
-        wandb.log(
-            {
-                "charts/learning_rate": optimizer.param_groups[0]["lr"],
-                "losses/value_loss": v_loss.item(),
-                "losses/policy_loss": pg_loss.item(),
-                "losses/entropy": entropy_loss.item(),
-                "losses/old_approx_kl": old_approx_kl.item(),
-                "losses/approx_kl": approx_kl.item(),
-                "losses/clipfrac": np.mean(clipfracs),
-                "losses/explained_variance": explained_var,
-                "charts/SPS": int(global_step / (time.time() - start_time)),
-            },
-            step=global_step,
-        )
+        writer.add_scalar("charts/learning_rate", optimizer.param_groups[0]["lr"], global_step)
+        writer.add_scalar("losses/value_loss", v_loss.item(), global_step)
+        writer.add_scalar("losses/policy_loss", pg_loss.item(), global_step)
+        writer.add_scalar("losses/entropy", entropy_loss.item(), global_step)
+        writer.add_scalar("losses/old_approx_kl", old_approx_kl.item(), global_step)
+        writer.add_scalar("losses/approx_kl", approx_kl.item(), global_step)
+        writer.add_scalar("losses/clipfrac", np.mean(clipfracs), global_step)
+        writer.add_scalar("losses/explained_variance", explained_var, global_step)
+        writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
 
         if args.checkpoint_path is not None:
             checkpoints_path = os.path.join(args.checkpoint_path, args.name)
@@ -334,6 +327,7 @@ def train(args: Args):
                 torch.save(agent.state_dict(), os.path.join(checkpoints_path, f"{iteration}.pt"))
 
     envs.close()
+    writer.close()
 
 
 if __name__ == "__main__":
