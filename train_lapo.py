@@ -21,7 +21,7 @@ from src.nn import LAPO, ActionDecoder, Actor
 from src.scheduler import linear_annealing_with_warmup
 from src.utils import (
     DCSInMemoryDataset,
-    DCSLAPOInMemoryDataset,
+    DCSLAOMInMemoryDataset,
     create_env_from_df,
     get_grad_norm,
     get_optim_groups,
@@ -106,7 +106,7 @@ class Config:
 
 
 def train_lapo(config: LAPOConfig):
-    dataset = DCSLAPOInMemoryDataset(
+    dataset = DCSLAOMInMemoryDataset(
         config.data_path, max_offset=config.future_obs_offset, frame_stack=config.frame_stack, device=DEVICE
     )
     dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=True, drop_last=True)
@@ -144,7 +144,7 @@ def train_lapo(config: LAPOConfig):
             total_tokens += config.batch_size
             total_steps += 1
 
-            obs, next_obs, future_obs, actions, _ = [b.to(DEVICE) for b in batch]
+            obs, next_obs, future_obs, actions, _, _ = [b.to(DEVICE) for b in batch]
             obs = normalize_img(obs.permute((0, 3, 1, 2)))
             next_obs = normalize_img(next_obs.permute((0, 3, 1, 2)))
             future_obs = normalize_img(future_obs.permute((0, 3, 1, 2)))
