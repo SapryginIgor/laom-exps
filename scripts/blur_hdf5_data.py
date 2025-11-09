@@ -23,8 +23,8 @@ from depth_anything_v2.dpt import DepthAnythingV2
 class DepthBlurProcessor:
     """Applies depth-based background blurring using DepthAnything V2."""
     
-    def __init__(self, encoder='vitb', percentile=50, blur_kernel=(31, 31), blur_sigma=11, 
-                 mask_kernel=(21, 21), mask_sigma=10, device='cuda'):
+    def __init__(self, encoder='vitb', percentile=50, blur_kernel=(11, 11), blur_sigma=5,
+                 mask_kernel=(5, 5), mask_sigma=1, threshold_alpha=0.1, device='cuda'):
         """
         Args:
             encoder: DepthAnything encoder size ('vits', 'vitb', 'vitl', 'vitg')
@@ -33,6 +33,7 @@ class DepthBlurProcessor:
             blur_sigma: Sigma for Gaussian blur on background
             mask_kernel: Kernel size for mask feathering
             mask_sigma: Sigma for mask feathering
+            threshold_alpha: EMA smoothing factor for depth threshold (0=no update, 1=full update)
             device: Device to run depth model on
         """
         self.percentile = percentile
@@ -40,6 +41,7 @@ class DepthBlurProcessor:
         self.blur_sigma = blur_sigma
         self.mask_kernel = mask_kernel
         self.mask_sigma = mask_sigma
+        self.threshold_alpha = threshold_alpha
         self.device = device
         
         # Model configurations
@@ -59,15 +61,18 @@ class DepthBlurProcessor:
         
         print(f"Loaded DepthAnything V2 ({encoder}) for depth-based blurring")
     
-    def blur_single_frame(self, frame):
+    def blur_single_frame(self, frame, depth_threshold=None):
         """
         Apply depth-based blur to a single RGB frame.
         
         Args:
             frame: numpy array of shape (H, W, 3) in range [0, 255] uint8
+            depth_threshold: Optional previous threshold value for EMA smoothing.
         
         Returns:
-            Blurred frame of same shape in range [0, 255] uint8
+            tuple: (blurred_frame, depth_threshold) where:
+                - blurred_frame: numpy array of same shape as input in range [0, 255] uint8
+                - depth_threshold: the updated threshold value (smoothed via EMA)
         """
         # Infer depth for this frame
         with torch.no_grad():
@@ -77,38 +82,54 @@ class DepthBlurProcessor:
         depth = (depth - depth.min()) / (depth.max() - depth.min()) * 255.0
         depth = depth.astype(np.uint8)
         
-        # Create mask: foreground (high depth values) vs background (low depth values)
-        p = np.percentile(depth, self.percentile)
-        mask = (depth > p).astype(np.float32)
+        # Compute current frame's threshold
+        current_threshold = np.percentile(depth, self.percentile)
         
-        # Feather mask edges
-        mask = cv2.GaussianBlur(mask, self.mask_kernel, self.mask_sigma)
+        # Apply exponential moving average for smooth threshold adaptation
+        # EMA formula: new_value = alpha * current + (1 - alpha) * previous
+        if depth_threshold is None:
+            # First frame: use current threshold
+            depth_threshold = current_threshold
+        else:
+            # Subsequent frames: smooth with EMA
+            depth_threshold = (self.threshold_alpha * current_threshold +
+                             (1 - self.threshold_alpha) * depth_threshold)
+        
+        # Create mask: foreground (high depth values) vs background (low depth values)
+        # Note: In DepthAnything, higher depth values = closer to camera = foreground
+        mask = (depth > depth_threshold).astype(np.float32)
+        
+        # Apply mask smoothing for gradual foreground/background transition
+        # This creates a softer blend so background objects remain partially visible
+        # mask = cv2.GaussianBlur(mask, self.mask_kernel, self.mask_sigma)
         mask3 = mask[..., None]  # Add channel dimension
         
-        # Apply Gaussian blur to background
+        # Apply softer Gaussian blur to background
+        # Reduced blur strength allows model to perceive background motion/objects
         blurred = cv2.GaussianBlur(frame, self.blur_kernel, self.blur_sigma)
         
-        # Composite: keep foreground sharp, blur background
+        # Composite: smooth blend between sharp foreground and softly blurred background
         result = (frame * mask3 + blurred * (1 - mask3)).astype(np.uint8)
         
-        return result
+        return result, depth_threshold
     
-    def blur_observation(self, obs):
+    def blur_observation(self, obs, depth_threshold=None):
         """
         Apply depth-based blur to an observation (single frame, RGB).
         
         Args:
             obs: numpy array of shape (H, W, 3) in range [0, 255] uint8
+            depth_threshold: Optional fixed threshold value
         
         Returns:
-            Blurred observation of same shape in range [0, 255] uint8
+            tuple: (blurred_obs, depth_threshold)
         """
-        return self.blur_single_frame(obs)
+        return self.blur_single_frame(obs, depth_threshold)
 
 
-def blur_hdf5_dataset(input_path, output_path, encoder='vitb', percentile=50, 
-                      blur_kernel=(31, 31), blur_sigma=11, mask_kernel=(21, 21), 
-                      mask_sigma=10, device='cuda', batch_size=32):
+def blur_hdf5_dataset(input_path, output_path, encoder='vitb', percentile=50,
+                      blur_kernel=(3, 3), blur_sigma=3, mask_kernel=(21, 21),
+                      mask_sigma=10, threshold_alpha=0.1, device='cuda', batch_size=32):
     """
     Read an HDF5 dataset, blur all observations, and save to a new HDF5 file.
     
@@ -121,6 +142,7 @@ def blur_hdf5_dataset(input_path, output_path, encoder='vitb', percentile=50,
         blur_sigma: Sigma for Gaussian blur
         mask_kernel: Kernel size for mask feathering
         mask_sigma: Sigma for mask feathering
+        threshold_alpha: EMA smoothing factor for depth threshold
         device: Device to run depth model on
         batch_size: Number of frames to process at once (for progress tracking)
     """
@@ -135,6 +157,7 @@ def blur_hdf5_dataset(input_path, output_path, encoder='vitb', percentile=50,
         blur_sigma=blur_sigma,
         mask_kernel=mask_kernel,
         mask_sigma=mask_sigma,
+        threshold_alpha=threshold_alpha,
         device=device
     )
     
@@ -159,12 +182,18 @@ def blur_hdf5_dataset(input_path, output_path, encoder='vitb', percentile=50,
                 
                 print(f"\nTrajectory {traj_key}: {num_frames} frames, shape {obs.shape}")
                 
-                # Blur each observation
+                # Blur each observation with moving average threshold
                 blurred_obs = []
+                depth_threshold = None
+                thresholds = []
                 for i in tqdm(range(num_frames), desc=f"Blurring {traj_key}", leave=False):
                     frame = obs[i]  # (H, W, C)
-                    blurred_frame = blur_processor.blur_observation(frame)
+                    blurred_frame, depth_threshold = blur_processor.blur_observation(frame, depth_threshold)
                     blurred_obs.append(blurred_frame)
+                    thresholds.append(depth_threshold)
+                
+                print(f"  Depth threshold range: [{min(thresholds):.2f}, {max(thresholds):.2f}], "
+                      f"mean: {np.mean(thresholds):.2f}, final: {depth_threshold:.2f}")
                 
                 # Stack and save blurred observations
                 blurred_obs = np.stack(blurred_obs, axis=0)
@@ -212,30 +241,34 @@ def main():
         help='Depth percentile threshold for foreground/background separation (default: 50)'
     )
     parser.add_argument(
-        '--blur-kernel', 
-        type=int, 
+        '--blur-kernel',
+        type=int,
         nargs=2,
-        default=[31, 31],
-        help='Kernel size for Gaussian blur on background (default: 31 31)'
+        default=[15, 15],
+        help='Kernel size for Gaussian blur on background (default: 15 15). '
+             'Softer blur allows background visibility.'
     )
     parser.add_argument(
-        '--blur-sigma', 
-        type=float, 
-        default=11.0,
-        help='Sigma for Gaussian blur on background (default: 11.0)'
+        '--blur-sigma',
+        type=float,
+        default=5.0,
+        help='Sigma for Gaussian blur on background (default: 5.0). '
+             'Softer blur allows background visibility.'
     )
     parser.add_argument(
-        '--mask-kernel', 
-        type=int, 
+        '--mask-kernel',
+        type=int,
         nargs=2,
-        default=[21, 21],
-        help='Kernel size for mask feathering (default: 21 21)'
+        default=[11, 11],
+        help='Kernel size for mask feathering (default: 11 11). '
+             'Creates smooth foreground/background transition.'
     )
     parser.add_argument(
-        '--mask-sigma', 
-        type=float, 
-        default=10.0,
-        help='Sigma for mask feathering (default: 10.0)'
+        '--mask-sigma',
+        type=float,
+        default=3.0,
+        help='Sigma for mask feathering (default: 3.0). '
+             'Creates smooth foreground/background transition.'
     )
     parser.add_argument(
         '--device',
@@ -245,8 +278,15 @@ def main():
         help='Device to run depth model on (default: cuda). Use "mps" for Apple Silicon GPUs.'
     )
     parser.add_argument(
-        '--batch-size', 
-        type=int, 
+        '--threshold-alpha',
+        type=float,
+        default=0.1,
+        help='EMA smoothing factor for depth threshold (default: 0.1). '
+             'Lower values = smoother transitions, higher values = faster adaptation.'
+    )
+    parser.add_argument(
+        '--batch-size',
+        type=int,
         default=32,
         help='Batch size for processing (default: 32)'
     )
@@ -279,6 +319,7 @@ def main():
         blur_sigma=args.blur_sigma,
         mask_kernel=tuple(args.mask_kernel),
         mask_sigma=args.mask_sigma,
+        threshold_alpha=args.threshold_alpha,
         device=args.device,
         batch_size=args.batch_size
     )

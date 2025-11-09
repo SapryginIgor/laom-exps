@@ -28,8 +28,9 @@ depth = pred[0].cpu().numpy()
 
 # the more the number, the more blurry the result
 p = np.percentile(depth, 70)
-mask = (depth <= p).astype(np.float32)
-mask = cv2.GaussianBlur(mask, (21,21), 10)             # feather edges
+mask = (depth <= p).astype(np.uint8)
+# No mask smoothing - keep sharp edges to preserve foreground details
+# mask = cv2.GaussianBlur(mask, (5,5), 1)
 mask3 = mask[..., None]
 
 # 6) Composite: blur background
