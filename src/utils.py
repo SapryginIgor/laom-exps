@@ -84,7 +84,7 @@ class DCSInMemoryDataset(Dataset):
 
 
 class DCSLAOMInMemoryDataset(Dataset):
-    def __init__(self, hdf5_path, frame_stack=1, device="cpu", max_offset=1):
+    def __init__(self, hdf5_path, frame_stack=1, device="cpu", max_offset=1, load_masks=False):
         with h5py.File(hdf5_path, "r") as df:
             self.observations = [torch.tensor(df[traj]["obs"][:], device=device) for traj in df.keys()]
             self.actions = [torch.tensor(df[traj]["actions"][:], device=device) for traj in df.keys()]
@@ -92,11 +92,21 @@ class DCSLAOMInMemoryDataset(Dataset):
             self.img_hw = df.attrs["img_hw"]
             self.act_dim = self.actions[0][0].shape[-1]
             self.state_dim = self.states[0][0].shape[-1]
+            
+            # Load pre-generated masks if available
+            self.masks = None
+            if load_masks:
+                try:
+                    self.masks = [torch.tensor(df[traj]["masks"][:], device=device) for traj in df.keys()]
+                    print(f"Loaded pre-generated masks from {hdf5_path}")
+                except KeyError:
+                    print(f"Warning: 'masks' dataset not found in {hdf5_path}. Masks will not be used.")
 
         self.frame_stack = frame_stack
         self.traj_len = self.observations[0].shape[0]
         assert 1 <= max_offset < self.traj_len
         self.max_offset = max_offset
+        self.load_masks = load_masks
 
     def __get_padded_obs(self, traj_idx, idx):
         # stacking frames
@@ -114,6 +124,26 @@ class DCSLAOMInMemoryDataset(Dataset):
         obs = obs.reshape(*obs.shape[:2], -1)
 
         return obs
+    
+    def __get_padded_mask(self, traj_idx, idx):
+        """Get padded mask for frame stacking (same logic as obs)."""
+        if self.masks is None:
+            return None
+        
+        min_obs_idx = max(0, idx - self.frame_stack + 1)
+        max_obs_idx = idx + 1
+        mask = self.masks[traj_idx][min_obs_idx:max_obs_idx]
+        
+        # pad if at the beginning
+        if mask.shape[0] < self.frame_stack:
+            pad_mask = mask[0][None]
+            mask = torch.concat([pad_mask for _ in range(self.frame_stack - mask.shape[0])] + [mask])
+        
+        # Reshape to match obs format: (H, W, C*frame_stack)
+        mask = mask.permute((1, 2, 0, 3))
+        mask = mask.reshape(*mask.shape[:2], -1)
+        
+        return mask
 
     def __len__(self):
         return len(self.actions) * (self.traj_len - self.max_offset)
@@ -127,8 +157,13 @@ class DCSLAOMInMemoryDataset(Dataset):
         next_obs = self.__get_padded_obs(traj_idx, transition_idx + 1)
         offset = random.randint(1, self.max_offset)
         future_obs = self.__get_padded_obs(traj_idx, transition_idx + offset)
-
-        return obs, next_obs, future_obs, action, state, (offset - 1)
+        
+        # Get masks if available
+        if self.load_masks and self.masks is not None:
+            next_obs_mask = self.__get_padded_mask(traj_idx, transition_idx + 1)
+            return obs, next_obs, future_obs, action, state, (offset - 1), next_obs_mask
+        else:
+            return obs, next_obs, future_obs, action, state, (offset - 1), None
 
 
 class DCSLAOMTrueActionsDataset(IterableDataset):
