@@ -101,6 +101,7 @@ class DCSLAOMInMemoryDataset(Dataset):
                     print(f"Loaded pre-generated masks from {hdf5_path}")
                 except KeyError:
                     print(f"Warning: 'masks' dataset not found in {hdf5_path}. Masks will not be used.")
+                    load_masks = False
 
         self.frame_stack = frame_stack
         self.traj_len = self.observations[0].shape[0]
@@ -158,12 +159,13 @@ class DCSLAOMInMemoryDataset(Dataset):
         offset = random.randint(1, self.max_offset)
         future_obs = self.__get_padded_obs(traj_idx, transition_idx + offset)
         
-        # Get masks if available
-        if self.load_masks and self.masks is not None:
+        # Only return masks if explicitly requested (for backward compatibility)
+        if self.load_masks:
             next_obs_mask = self.__get_padded_mask(traj_idx, transition_idx + 1)
             return obs, next_obs, future_obs, action, state, (offset - 1), next_obs_mask
         else:
-            return obs, next_obs, future_obs, action, state, (offset - 1), None
+            # Original behavior: return 6 elements without mask
+            return obs, next_obs, future_obs, action, state, (offset - 1)
 
 
 class DCSLAOMTrueActionsDataset(IterableDataset):
