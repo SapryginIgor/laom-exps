@@ -127,7 +127,7 @@ class DepthBlurProcessor:
         return self.blur_single_frame(obs, depth_threshold)
 
 
-def blur_hdf5_dataset(input_path, output_path, encoder='vitb', percentile=50,
+def blur_hdf5_dataset(input_path, output_path, encoder='vitb', percentile=30,
                       blur_kernel=(3, 3), blur_sigma=3, mask_kernel=(21, 21),
                       mask_sigma=10, threshold_alpha=0.1, device='cuda', batch_size=32):
     """
@@ -237,38 +237,38 @@ def main():
     parser.add_argument(
         '--percentile', 
         type=int, 
-        default=50,
+        default=30,
         help='Depth percentile threshold for foreground/background separation (default: 50)'
     )
     parser.add_argument(
         '--blur-kernel',
         type=int,
         nargs=2,
-        default=[15, 15],
-        help='Kernel size for Gaussian blur on background (default: 15 15). '
-             'Softer blur allows background visibility.'
+        default=[7, 7],
+        help='Kernel size for Gaussian blur on background (default: 7 7). '
+             'Smaller values = gentler blur, background more visible.'
     )
     parser.add_argument(
         '--blur-sigma',
         type=float,
-        default=5.0,
-        help='Sigma for Gaussian blur on background (default: 5.0). '
-             'Softer blur allows background visibility.'
+        default=2.0,
+        help='Sigma for Gaussian blur on background (default: 2.0). '
+             'Smaller values = gentler blur, background more visible.'
     )
     parser.add_argument(
         '--mask-kernel',
         type=int,
         nargs=2,
-        default=[11, 11],
-        help='Kernel size for mask feathering (default: 11 11). '
-             'Creates smooth foreground/background transition.'
+        default=[5, 5],
+        help='Kernel size for mask feathering (default: 5 5). '
+             'Smaller values = sharper foreground/background boundary.'
     )
     parser.add_argument(
         '--mask-sigma',
         type=float,
-        default=3.0,
-        help='Sigma for mask feathering (default: 3.0). '
-             'Creates smooth foreground/background transition.'
+        default=1.0,
+        help='Sigma for mask feathering (default: 1.0). '
+             'Smaller values = sharper foreground/background boundary.'
     )
     parser.add_argument(
         '--device',

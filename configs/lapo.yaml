@@ -2,7 +2,7 @@ group: "lapo-default"
 seed: 0
 
 lapo:
-  num_epochs: 1
+  num_epochs: 10
   batch_size: 512
   future_obs_offset: 10
   learning_rate: 0.0001
@@ -14,10 +14,10 @@ lapo:
   encoder_deep: False
   frame_stack: 3
   # TODO: change to your data path
-  data_path: "data/example-data.hdf5"
+  data_path: "data/cheetah-run-path.hdf5"
 
 bc:
-  num_epochs: 1
+  num_epochs: 10
   batch_size: 512
   learning_rate: 0.0001
   weight_decay: 0.0 
@@ -29,14 +29,14 @@ bc:
   use_aug: False
   frame_stack: 3
   # TODO: change to your data and DAVIS path
-  data_path: "data/example-data.hdf5"
+  data_path: "data/cheetah-run-path.hdf5"
   dcs_backgrounds_path: "DAVIS/JPEGImages/480p"
   dcs_backgrounds_split: "train"
-  eval_episodes: 1
+  eval_episodes: 5
   eval_seed: 0
 
 decoder:
-  total_updates: 10
+  total_updates: 2500
   batch_size: 512
   learning_rate: 0.0003
   weight_decay: 0.0
@@ -44,8 +44,8 @@ decoder:
   hidden_dim: 256
   use_aug: False
   # TODO: change to your action-labeled data and DAVIS path
-  data_path: "data/example-data.hdf5"
+  data_path: "data/cheetah-run-path.hdf5"
   dcs_backgrounds_path: "DAVIS/JPEGImages/480p"
   dcs_backgrounds_split: "train"
-  eval_episodes: 1
+  eval_episodes: 25
   eval_seed: 0

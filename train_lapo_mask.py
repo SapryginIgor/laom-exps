@@ -150,8 +150,7 @@ class LAPOConfig:
     data_path: str = "data/test.hdf5"
     # Masking parameters
     use_mask: bool = True
-    depth_encoder: str = 'vitb'  # 'vits', 'vitb', 'vitl', 'vitg'
-    mask_percentile: int = 50  # Depth percentile for foreground/background
+    masks_path: Optional[str] = None  # Path to masks file (auto-inferred if None)
 
 
 @dataclass
@@ -238,7 +237,7 @@ def masked_mse_loss(pred, target, mask):
 def train_lapo(config: LAPOConfig):
     dataset = DCSLAOMInMemoryDataset(
         config.data_path, max_offset=config.future_obs_offset, frame_stack=config.frame_stack,
-        device=DEVICE, load_masks=config.use_mask
+        device=DEVICE, load_masks=config.use_mask, masks_path=config.masks_path
     )
     dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=True, drop_last=True)
     lapo = LAPO(

@@ -84,7 +84,7 @@ class DCSInMemoryDataset(Dataset):
 
 
 class DCSLAOMInMemoryDataset(Dataset):
-    def __init__(self, hdf5_path, frame_stack=1, device="cpu", max_offset=1, load_masks=False):
+    def __init__(self, hdf5_path, frame_stack=1, device="cpu", max_offset=1, load_masks=False, masks_path=None):
         with h5py.File(hdf5_path, "r") as df:
             self.observations = [torch.tensor(df[traj]["obs"][:], device=device) for traj in df.keys()]
             self.actions = [torch.tensor(df[traj]["actions"][:], device=device) for traj in df.keys()]
@@ -93,14 +93,28 @@ class DCSLAOMInMemoryDataset(Dataset):
             self.act_dim = self.actions[0][0].shape[-1]
             self.state_dim = self.states[0][0].shape[-1]
             
-            # Load pre-generated masks if available
+            # Load pre-generated masks from separate file if specified
             self.masks = None
             if load_masks:
+                # If masks_path not provided, try to infer it from data path
+                if masks_path is None:
+                    # Try common naming patterns: data.hdf5 -> data-masks.hdf5
+                    import os
+                    base_path = os.path.splitext(hdf5_path)[0]
+                    masks_path = f"{base_path}-masks.hdf5"
+                
                 try:
-                    self.masks = [torch.tensor(df[traj]["masks"][:], device=device) for traj in df.keys()]
-                    print(f"Loaded pre-generated masks from {hdf5_path}")
-                except KeyError:
-                    print(f"Warning: 'masks' dataset not found in {hdf5_path}. Masks will not be used.")
+                    with h5py.File(masks_path, "r") as masks_file:
+                        # Load masks as uint8 and convert to float32 [0, 1]
+                        # Masks are stored as single-channel (T, H, W) uint8 [0, 255]
+                        self.masks = [
+                            torch.tensor(masks_file[traj]["masks"][:], device=device).float() / 255.0
+                            for traj in df.keys()
+                        ]
+                        print(f"Loaded pre-generated masks from {masks_path}")
+                except (FileNotFoundError, KeyError) as e:
+                    print(f"Warning: Could not load masks from {masks_path}. Error: {e}")
+                    print(f"Masks will not be used. Generate them with: python scripts/generate_masks_hdf5.py --input {hdf5_path} --output {masks_path}")
                     load_masks = False
 
         self.frame_stack = frame_stack
@@ -133,16 +147,19 @@ class DCSLAOMInMemoryDataset(Dataset):
         
         min_obs_idx = max(0, idx - self.frame_stack + 1)
         max_obs_idx = idx + 1
-        mask = self.masks[traj_idx][min_obs_idx:max_obs_idx]
+        mask = self.masks[traj_idx][min_obs_idx:max_obs_idx]  # (frame_stack, H, W)
         
         # pad if at the beginning
         if mask.shape[0] < self.frame_stack:
             pad_mask = mask[0][None]
             mask = torch.concat([pad_mask for _ in range(self.frame_stack - mask.shape[0])] + [mask])
         
-        # Reshape to match obs format: (H, W, C*frame_stack)
-        mask = mask.permute((1, 2, 0, 3))
-        mask = mask.reshape(*mask.shape[:2], -1)
+        # Expand single-channel mask to 3 channels and reshape to match obs format
+        # mask is (frame_stack, H, W), we need (H, W, frame_stack*3)
+        mask = mask.unsqueeze(-1)  # (frame_stack, H, W, 1)
+        mask = mask.expand(-1, -1, -1, 3)  # (frame_stack, H, W, 3)
+        mask = mask.permute((1, 2, 0, 3))  # (H, W, frame_stack, 3)
+        mask = mask.reshape(*mask.shape[:2], -1)  # (H, W, frame_stack*3)
         
         return mask
 

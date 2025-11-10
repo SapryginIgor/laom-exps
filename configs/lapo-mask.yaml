@@ -15,10 +15,10 @@ lapo:
   frame_stack: 3
   # Masking parameters
   use_mask: True
-  depth_encoder: "vits"  # 'vits', 'vitb', 'vitl', 'vitg'
-  mask_percentile: 50  # Depth percentile for foreground/background separation
   # TODO: change to your data path
   data_path: "data/cheetah-run-big.hdf5"
+  # Optional: specify masks file path (if not provided, will auto-infer as data_path-masks.hdf5)
+  masks_path: "data/cheetah-run-big-masks.hdf5"
 
 bc:
   num_epochs: 10

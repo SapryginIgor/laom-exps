@@ -109,10 +109,9 @@ class DepthMaskGenerator:
         # Feather mask edges for smoother transitions
         mask = cv2.GaussianBlur(mask, self.mask_kernel, self.mask_sigma)
         
-        # Expand to 3 channels (one per RGB channel)
-        mask_3ch = np.stack([mask, mask, mask], axis=-1)  # (H, W, 3)
-        
-        return mask_3ch, depth_threshold
+        # Keep as single channel (H, W) - we'll expand to 3 channels during loading
+        # This saves 3x storage space
+        return mask, depth_threshold
     
     def generate_mask_observation(self, obs, depth_threshold=None):
         """
@@ -129,14 +128,15 @@ class DepthMaskGenerator:
 
 
 def generate_masks_hdf5_dataset(input_path, output_path, encoder='vitb', percentile=50,
-                                mask_kernel=(21, 21), mask_sigma=10, threshold_alpha=0.1, 
+                                mask_kernel=(21, 21), mask_sigma=10, threshold_alpha=0.1,
                                 device='cuda', batch_size=32):
     """
-    Read an HDF5 dataset, generate masks for all observations, and save to a new HDF5 file.
+    Read an HDF5 dataset, generate masks for all observations, and save to a separate HDF5 file.
+    This keeps the original data file unchanged and stores masks separately to avoid large file sizes.
     
     Args:
         input_path: Path to input HDF5 file
-        output_path: Path to output HDF5 file
+        output_path: Path to output HDF5 file (will contain only masks)
         encoder: DepthAnything encoder size
         percentile: Depth percentile threshold
         mask_kernel: Kernel size for mask feathering
@@ -146,7 +146,7 @@ def generate_masks_hdf5_dataset(input_path, output_path, encoder='vitb', percent
         batch_size: Number of frames to process at once (for progress tracking)
     """
     print(f"Reading dataset from: {input_path}")
-    print(f"Output will be saved to: {output_path}")
+    print(f"Masks will be saved to: {output_path}")
     
     # Initialize mask generator
     mask_generator = DepthMaskGenerator(
@@ -158,12 +158,14 @@ def generate_masks_hdf5_dataset(input_path, output_path, encoder='vitb', percent
         device=device
     )
     
-    # Open input file and create output file
+    # Open input file and create output file (masks only)
     with h5py.File(input_path, 'r') as input_file:
         with h5py.File(output_path, 'w') as output_file:
-            # Copy attributes
-            for attr_name, attr_value in input_file.attrs.items():
-                output_file.attrs[attr_name] = attr_value
+            # Copy only essential attributes
+            output_file.attrs['img_hw'] = input_file.attrs['img_hw']
+            output_file.attrs['source_file'] = input_path
+            output_file.attrs['encoder'] = encoder
+            output_file.attrs['percentile'] = percentile
             
             # Process each trajectory
             trajectory_keys = list(input_file.keys())
@@ -193,25 +195,20 @@ def generate_masks_hdf5_dataset(input_path, output_path, encoder='vitb', percent
                       f"mean: {np.mean(thresholds):.2f}, final: {depth_threshold:.2f}")
                 
                 # Stack and save masks
-                masks = np.stack(masks, axis=0)  # (T, H, W, 3)
+                masks = np.stack(masks, axis=0)  # (T, H, W) - single channel
                 print(f"  Mask coverage: mean={masks.mean():.3f}, min={masks.min():.3f}, max={masks.max():.3f}")
                 
-                # Save masks as float32 to preserve [0, 1] range
-                output_traj_group.create_dataset('masks', data=masks, compression='gzip', dtype='float32')
+                # Convert to uint8 [0, 255] to save space (4x smaller than float32)
+                # We'll convert back to float [0, 1] during loading
+                masks_uint8 = (masks * 255).astype(np.uint8)
                 
-                # Copy original observations
-                output_traj_group.create_dataset('obs', data=obs, compression='gzip')
+                # Save masks as uint8 with compression
+                output_traj_group.create_dataset('masks', data=masks_uint8, compression='gzip', dtype='uint8')
                 
-                # Copy other datasets (actions, states, etc.) without modification
-                for dataset_name in traj_group.keys():
-                    if dataset_name != 'obs':
-                        output_traj_group.create_dataset(
-                            dataset_name, 
-                            data=traj_group[dataset_name][:],
-                            compression='gzip'
-                        )
+
     
-    print(f"\nDataset with masks saved to: {output_path}")
+    print(f"\nMasks saved to: {output_path}")
+    print(f"Original data remains in: {input_path}")
 
 
 def main():
