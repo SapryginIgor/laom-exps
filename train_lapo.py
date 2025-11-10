@@ -72,6 +72,10 @@ class BCConfig:
     dcs_backgrounds_split: str = "train"
     eval_episodes: int = 10
     eval_seed: int = 0
+    # Evaluation-time blurring (set to True if training data was blurred)
+    eval_use_blur: bool = False
+    eval_blur_encoder: str = 'vits'
+    eval_blur_percentile: int = 50
 
 
 @dataclass
@@ -88,6 +92,10 @@ class DecoderConfig:
     dcs_backgrounds_split: str = "train"
     eval_episodes: int = 10
     eval_seed: int = 0
+    # Evaluation-time blurring (set to True if training data was blurred)
+    eval_use_blur: bool = False
+    eval_blur_encoder: str = 'vits'
+    eval_blur_percentile: int = 50
 
 
 @dataclass
@@ -224,6 +232,10 @@ def train_bc(lam: LAPO, config: BCConfig):
         config.dcs_backgrounds_path,
         config.dcs_backgrounds_split,
         frame_stack=config.frame_stack,
+        use_blur=config.eval_use_blur,
+        blur_encoder=config.eval_blur_encoder,
+        blur_percentile=config.eval_blur_percentile,
+        device=DEVICE,
     )
     print(eval_env.observation_space)
     print(eval_env.action_space)
@@ -352,6 +364,10 @@ def train_act_decoder(actor: Actor, config: DecoderConfig, bc_config: BCConfig):
         config.dcs_backgrounds_path,
         config.dcs_backgrounds_split,
         frame_stack=bc_config.frame_stack,
+        use_blur=config.eval_use_blur,
+        blur_encoder=config.eval_blur_encoder,
+        blur_percentile=config.eval_blur_percentile,
+        device=DEVICE,
     )
     print(eval_env.observation_space)
     print(eval_env.action_space)

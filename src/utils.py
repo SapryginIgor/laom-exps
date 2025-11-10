@@ -269,6 +269,100 @@ class FlattenStackedFrames(gym.ObservationWrapper):
         return obs
 
 
+class DepthBlurWrapper(gym.ObservationWrapper):
+    """Applies depth-based background blurring to observations during evaluation."""
+    
+    def __init__(self, env: gym.Env, encoder='vits', percentile=50,
+                 blur_kernel=(7, 7), blur_sigma=2.0, device='cuda'):
+        super().__init__(env)
+        import sys
+        import cv2
+        import torch
+        
+        # Add Depth-Anything-V2 to path if not already there
+        if 'Depth-Anything-V2' not in sys.path[0]:
+            sys.path.insert(0, 'Depth-Anything-V2')
+        from depth_anything_v2.dpt import DepthAnythingV2
+        
+        self.percentile = percentile
+        self.blur_kernel = blur_kernel
+        self.blur_sigma = blur_sigma
+        self.device = device
+        self.depth_threshold = None  # EMA threshold across frames
+        
+        # Model configurations
+        model_configs = {
+            'vits': {'encoder': 'vits', 'features': 64, 'out_channels': [48, 96, 192, 384]},
+            'vitb': {'encoder': 'vitb', 'features': 128, 'out_channels': [96, 192, 384, 768]},
+            'vitl': {'encoder': 'vitl', 'features': 256, 'out_channels': [256, 512, 1024, 1024]},
+            'vitg': {'encoder': 'vitg', 'features': 384, 'out_channels': [1536, 1536, 1536, 1536]}
+        }
+        
+        # Load DepthAnything model
+        self.model = DepthAnythingV2(**model_configs[encoder])
+        checkpoint_path = f'Depth-Anything-V2/checkpoints/depth_anything_v2_{encoder}.pth'
+        self.model.load_state_dict(torch.load(checkpoint_path, map_location=device, weights_only=False))
+        self.model = self.model.to(device).eval()
+        
+        print(f"DepthBlurWrapper: Loaded DepthAnything V2 ({encoder}) for evaluation-time blurring")
+    
+    def observation(self, obs):
+        """Apply depth-based blur to observation."""
+        import cv2
+        import torch
+        import numpy as np
+        
+        # obs shape depends on whether frame stacking is applied
+        # Could be (H, W, C) or (H, W, C*frames) after FlattenStackedFrames
+        original_shape = obs.shape
+        channels = obs.shape[-1]
+        
+        # Process each frame if stacked (assuming 3 channels per frame)
+        frames = channels // 3
+        blurred_frames = []
+        
+        for f in range(frames):
+            # Extract frame
+            frame = obs[:, :, f*3:(f+1)*3]
+            
+            # Infer depth
+            with torch.no_grad():
+                depth = self.model.infer_image(frame)
+            
+            # Normalize depth
+            depth = (depth - depth.min()) / (depth.max() - depth.min()) * 255.0
+            depth = depth.astype(np.uint8)
+            
+            # Compute threshold
+            current_threshold = np.percentile(depth, self.percentile)
+            if self.depth_threshold is None:
+                self.depth_threshold = current_threshold
+            else:
+                # EMA smoothing
+                self.depth_threshold = 0.1 * current_threshold + 0.9 * self.depth_threshold
+            
+            # Create mask
+            mask = (depth > self.depth_threshold).astype(np.float32)
+            mask3 = mask[..., None]
+            
+            # Apply blur
+            blurred = cv2.GaussianBlur(frame, self.blur_kernel, self.blur_sigma)
+            result = (frame * mask3 + blurred * (1 - mask3)).astype(np.uint8)
+            
+            blurred_frames.append(result)
+        
+        # Recombine frames
+        blurred_obs = np.concatenate(blurred_frames, axis=2)
+        assert blurred_obs.shape == original_shape
+        
+        return blurred_obs
+    
+    def reset(self, **kwargs):
+        """Reset depth threshold on episode reset."""
+        self.depth_threshold = None
+        return super().reset(**kwargs)
+
+
 def create_env_from_df(
     hdf5_path,
     backgrounds_path,
@@ -277,6 +371,12 @@ def create_env_from_df(
     pixels_only=True,
     flatten_frames=True,
     difficulty=None,
+    use_blur=False,
+    blur_encoder='vits',
+    blur_percentile=50,
+    blur_kernel=(7, 7),
+    blur_sigma=2.0,
+    device='cuda',
 ):
     with h5py.File(hdf5_path, "r") as df:
         dm_env = suite.load(
@@ -299,5 +399,16 @@ def create_env_from_df(
             env = gym.wrappers.FrameStackObservation(env, stack_size=frame_stack)
             if flatten_frames:
                 env = FlattenStackedFrames(env)
+        
+        # Apply depth-based blurring if requested (after frame stacking)
+        if use_blur:
+            env = DepthBlurWrapper(
+                env,
+                encoder=blur_encoder,
+                percentile=blur_percentile,
+                blur_kernel=blur_kernel,
+                blur_sigma=blur_sigma,
+                device=device
+            )
 
     return env

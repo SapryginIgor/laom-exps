@@ -186,7 +186,7 @@ def blur_hdf5_dataset(input_path, output_path, encoder='vitb', percentile=30,
                 blurred_obs = []
                 depth_threshold = None
                 thresholds = []
-                for i in tqdm(range(num_frames), desc=f"Blurring {traj_key}", leave=False):
+                for i in range(num_frames):
                     frame = obs[i]  # (H, W, C)
                     blurred_frame, depth_threshold = blur_processor.blur_observation(frame, depth_threshold)
                     blurred_obs.append(blurred_frame)
@@ -230,7 +230,7 @@ def main():
     parser.add_argument(
         '--encoder', 
         type=str, 
-        default='vitb',
+        default='vits',
         choices=['vits', 'vitb', 'vitl', 'vitg'],
         help='DepthAnything encoder size (default: vitb)'
     )
