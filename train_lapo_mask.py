@@ -237,7 +237,8 @@ def masked_mse_loss(pred, target, mask):
 
 def train_lapo(config: LAPOConfig):
     dataset = DCSLAOMInMemoryDataset(
-        config.data_path, max_offset=config.future_obs_offset, frame_stack=config.frame_stack, device=DEVICE
+        config.data_path, max_offset=config.future_obs_offset, frame_stack=config.frame_stack,
+        device=DEVICE, load_masks=config.use_mask
     )
     dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=True, drop_last=True)
     lapo = LAPO(
@@ -265,14 +266,12 @@ def train_lapo(config: LAPOConfig):
     linear_probe = nn.Linear(config.latent_action_dim, dataset.act_dim).to(DEVICE)
     probe_optim = torch.optim.Adam(linear_probe.parameters(), lr=config.learning_rate)
 
-    # Initialize mask generator if enabled
-    mask_generator = None
-    if config.use_mask:
-        mask_generator = DepthMaskGenerator(
-            encoder=config.depth_encoder,
-            percentile=config.mask_percentile,
-            device=DEVICE
-        )
+    # Check if masks are available in dataset
+    has_pregenerated_masks = config.use_mask and dataset.masks is not None
+    if config.use_mask and not has_pregenerated_masks:
+        print("Warning: use_mask=True but no masks found in dataset. "
+              "Please run scripts/generate_masks_hdf5.py first to pre-generate masks.")
+        print("Falling back to regular MSE loss without masking.")
 
     start_time = time.time()
     total_tokens = 0
@@ -283,18 +282,17 @@ def train_lapo(config: LAPOConfig):
             total_tokens += config.batch_size
             total_steps += 1
 
-            obs, next_obs, future_obs, actions, _, _ = [b.to(DEVICE) for b in batch]
+            # Unpack batch - now includes mask as 7th element
+            obs, next_obs, future_obs, actions, _, _, next_obs_mask = [b.to(DEVICE) if b is not None else None for b in batch]
             
-            # Generate masks BEFORE normalization (masks need uint8 [0, 255] images)
-            if mask_generator is not None:
-                # Generate mask for next_obs (the target we're reconstructing)
-                # next_obs is in [0, 255] uint8 format (B, H, W, C)
-                next_obs_mask = mask_generator.generate_masks(next_obs)
-            else:
-                # If masking is disabled, use all pixels (mask of ones)
+            # Handle mask: if not available, use all pixels
+            if next_obs_mask is None:
                 next_obs_mask = torch.ones_like(next_obs.permute((0, 3, 1, 2))).float()
+            else:
+                # Mask is already in (B, H, W, C) format from dataset, convert to (B, C, H, W)
+                next_obs_mask = next_obs_mask.permute((0, 3, 1, 2))
             
-            # Now normalize to [-1, 1]
+            # Now normalize observations to [-1, 1]
             obs = normalize_img(obs.permute((0, 3, 1, 2)))
             next_obs = normalize_img(next_obs.permute((0, 3, 1, 2)))
             future_obs = normalize_img(future_obs.permute((0, 3, 1, 2)))
@@ -329,7 +327,7 @@ def train_lapo(config: LAPOConfig):
             writer.add_scalar("lapo/epoch", epoch, total_steps)
             
             # Log mask statistics
-            if mask_generator is not None:
+            if has_pregenerated_masks:
                 writer.add_scalar("lapo/mask_mean", next_obs_mask.mean().item(), total_steps)
                 writer.add_scalar("lapo/mask_coverage", (next_obs_mask > 0.5).float().mean().item(), total_steps)
 
@@ -340,7 +338,7 @@ def train_lapo(config: LAPOConfig):
         writer.add_image("lapo/next_obs_pred", reconstruction_img, total_tokens)
         
         # Log mask visualization
-        if mask_generator is not None:
+        if has_pregenerated_masks:
             mask_example = [next_obs_mask[0][i : i + 3] for i in range(0, 3 * config.frame_stack, 3)]
             mask_img = make_grid(mask_example, nrow=config.frame_stack, padding=1)
             writer.add_image("lapo/mask", mask_img, total_tokens)
