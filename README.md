@@ -85,6 +85,67 @@ python -m scripts.sample_labeled_data \
     --num_trajectories=$num_traj
 ```
 
+## Data Processing & Visualization Scripts
+
+We provide several utility scripts for data processing and visualization:
+
+### Blurring Background
+
+Apply depth-based background blurring to datasets (useful for training with reduced background distractions):
+
+```bash
+# Blur observations using depth estimation
+python scripts/blur_hdf5_data.py \
+    --input data/example-data.hdf5 \
+    --output data/example-data-blurred.hdf5 \
+    --encoder vits \
+    --percentile 30 \
+    --blur-kernel 7 7 \
+    --blur-sigma 2.0
+```
+
+Parameters:
+- `--encoder`: DepthAnything model size (`vits`, `vitb`, `vitl`, `vitg`) - smaller is faster
+- `--percentile`: Depth threshold for foreground/background (30 = more foreground kept sharp)
+- `--blur-kernel`: Gaussian blur kernel size (smaller = gentler blur)
+- `--blur-sigma`: Blur strength (smaller = more visible background)
+
+### Generating Foreground Masks
+
+Pre-generate depth-based masks for mask-based training (saves masks separately to keep files small):
+
+```bash
+# Generate masks and save to separate file
+python scripts/generate_masks_hdf5.py \
+    --input data/example-data.hdf5 \
+    --output data/example-data-masks.hdf5 \
+    --encoder vits \
+    --percentile 50
+```
+
+The masks are stored as single-channel uint8 (much smaller than images) and loaded automatically during training.
+
+### Visualizing Trajectories
+
+#### Interactive Playback
+
+```bash
+# Play a single trajectory
+python scripts/visualize_trajectory.py \
+    --input data/example-data.hdf5 \
+    --trajectory 0 \
+    --fps 30
+
+# Compare original vs blurred side-by-side
+python scripts/visualize_trajectory.py \
+    --input data/example-data.hdf5 \
+    --input-blurred data/example-data-blurred.hdf5 \
+    --trajectory 0
+```
+
+Controls: `q` to quit, `p` to pause/resume, `r` to restart
+
+
 ## Running experiments
 
 We provide training scripts for all methods from the paper: IDM, LAPO, LAOM, LAOM+supervision. For clarity and educational purposes, all scrips are single-file and implement all stages of the LAM pipline at once: latent action model pre-training, behavioral cloning, action decoder fine-tuning. 
@@ -95,6 +156,58 @@ We provide training scripts for all methods from the paper: IDM, LAPO, LAOM, LAO
 > **WARN**: This is not the most efficient implementation if you need to run a lot of experiments with different hyperparameters, as it will waste time re-training from scratch duplicate parts of the pipeline. In such a case, it would be better to split these scripts into several modular ones (one for each stage).
 
 We provide the configs used in the experiments in the `configs`. You only need to provide all the paths to the required datasets:
+
+### LAPO (Latent Action Pre-training from Observations)
+
+```bash
+python -m train_lapo \
+    --config_path="configs/lapo.yaml" \
+    --lapo.data_path="data/example-data.hdf5" \
+    --bc.data_path="data/example-data.hdf5" \
+    --bc.dcs_backgrounds_path="DAVIS/JPEGImages/480p" \
+    --decoder.data_path="data/example-data.hdf5" \
+    --decoder.dcs_backgrounds_path="DAVIS/JPEGImages/480p"
+```
+
+For training with blurred data (and possible blurred eval):
+```bash
+# First, blur the dataset
+python scripts/blur_hdf5_data.py \
+    --input data/example-data.hdf5 \
+    --output data/example-data-blurred.hdf5
+
+# Then train with blurred data and enable evaluation-time blurring
+python -m train_lapo \
+    --config_path="configs/lapo.yaml" \
+    --lapo.data_path="data/example-data-blurred.hdf5" \
+    --bc.data_path="data/example-data-blurred.hdf5" \
+    --bc.eval_use_blur=True \
+    --bc.dcs_backgrounds_path="DAVIS/JPEGImages/480p" \
+    --decoder.data_path="data/example-data-blurred.hdf5" \
+    --decoder.eval_use_blur=True \
+    --decoder.dcs_backgrounds_path="DAVIS/JPEGImages/480p"
+```
+
+For training with masked loss:
+```bash
+# First, generate masks
+python scripts/generate_masks_hdf5.py \
+    --input data/example-data.hdf5 \
+    --output data/example-data-masks.hdf5
+
+# Then train with mask-based loss
+python -m train_lapo_mask \
+    --config_path="configs/lapo-mask.yaml" \
+    --lapo.data_path="data/example-data.hdf5" \
+    --lapo.masks_path="data/example-data-masks.hdf5" \
+    --bc.data_path="data/example-data.hdf5" \
+    --bc.dcs_backgrounds_path="DAVIS/JPEGImages/480p" \
+    --decoder.data_path="data/example-data.hdf5" \
+    --decoder.dcs_backgrounds_path="DAVIS/JPEGImages/480p"
+```
+
+### LAOM with Supervision
+
 ```bash
 python -m train_laom_labels \
     --config_path="configs/laom-labels.yaml" \
