@@ -22,6 +22,34 @@ We use slightly modified version of the original [Distracting Control Suite](htt
 
 You also need to get the DAVIS dataset, which is used for distracting backgrounds in the original DCS and in our work. We refer to the instructions in the [original repo](https://github.com/google-research/google-research/tree/master/distracting_control). You can put it wherever you like – all our scripts just need a path to it.
 
+### Depth-Anything V2 (for blurring and masking)
+
+If you plan to use depth-based blurring or masking, you need to set up Depth-Anything V2:
+
+```bash
+# Clone the repository
+git clone https://github.com/DepthAnything/Depth-Anything-V2.git
+
+# Create checkpoints directory
+mkdir -p Depth-Anything-V2/checkpoints
+
+# Download a checkpoint (we recommend vits for speed)
+# Visit: https://github.com/DepthAnything/Depth-Anything-V2#pre-trained-models
+# Download depth_anything_v2_vits.pth and place it in Depth-Anything-V2/checkpoints/
+
+# Or use wget (example for vits):
+wget https://huggingface.co/depth-anything/Depth-Anything-V2-Small/resolve/main/depth_anything_v2_vits.pth \
+    -O Depth-Anything-V2/checkpoints/depth_anything_v2_vits.pth
+```
+
+Available models (trade-off between speed and quality):
+- `vits` (Small) - Fastest, recommended for most use cases
+- `vitb` (Base) - Balanced
+- `vitl` (Large) - Higher quality, slower
+- `vitg` (Giant) - Best quality, slowest
+
+We use vits in all cases and find it's enough
+
 ## Data 
 
 <img src="images/envs-vis.png" alt="Environments" width="600">
