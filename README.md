@@ -121,6 +121,8 @@ We provide several utility scripts for data processing and visualization:
 
 Apply depth-based background blurring to datasets (useful for training with reduced background distractions):
 
+<img src="images/comparison.gif" alt="Original vs Blurred Comparison" width="600">
+
 ```bash
 # Blur observations using depth estimation
 python scripts/blur_hdf5_data.py \
