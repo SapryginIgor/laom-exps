@@ -155,6 +155,8 @@ python scripts/generate_masks_hdf5.py \
 
 The masks are stored as single-channel uint8 (much smaller than images) and loaded automatically during training.
 
+You can download pre-generated masks from [here](https://drive.google.com/file/d/119V9y62iPoOUEiaSJ4piWQCGfWDk9z99/view?usp=sharing).
+
 ### Visualizing Trajectories
 
 #### Interactive Playback
